@@ -55,9 +55,12 @@ Muninn captures.
 ## Roadmap
 
 ### Phase 1
-- [ ] REST API for note ingestion from Muninn
-- [ ] Centralized database for notes + metadata
+- [x] REST API for note ingestion from Muninn
+        - Post to receive notes
+- [x] Centralized database for notes + metadata
 - [ ] Basic fuzzy search
+        - Post to receive notes
+
 
 ### Phase 2
 - [ ] Embedding generation for notes
