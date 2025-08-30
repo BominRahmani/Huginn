@@ -1,11 +1,11 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
 import json
 import tarfile
 import sqlite3
 import io
 import os
 from datetime import datetime
-app = FastAPI()
+from fastapi.middleware.cors import CORSMiddleware
 
 import logging
 
@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 def init_db():
     conn = sqlite3.connect("huginn.db", check_same_thread=False)
     cursor = conn.cursor()
@@ -43,6 +50,27 @@ def init_db():
             ON DELETE CASCADE,            -- If note is deleted, delete attachments
         UNIQUE(note_id, file_name, file_path) -- Prevent duplicate attachments
     )
+    """)
+
+    cursor.execute("""
+    CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
+    USING fts5(content, content='notes', content_rowid='rowid');
+    """)
+
+    # keep fts in sync
+    cursor.executescript("""
+    CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
+        INSERT INTO notes_fts(rowid, content) VALUES (new.rowid, new.content);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
+        INSERT INTO notes_fts(notes_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
+        INSERT INTO notes_fts(notes_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+        INSERT INTO notes_fts(rowid, content) VALUES (new.rowid, new.content);
+    END;
     """)
     conn.commit()
     return conn
@@ -97,5 +125,27 @@ async def upload_file(request: Request):
     conn.commit()
     return {"status": "ok", "notes_inserted": len(notes)}
 
+@app.get("/search")
+async def search_notes(q: str = Query(..., description="Search query")):
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT n.id, n.content, n.created_at, n.updated_at
+        FROM notes_fts f
+        JOIN notes n ON n.rowid = f.rowid
+        WHERE notes_fts MATCH ?
+        ORDER BY rank
+        LIMIT 20
+    """, (q,))
+    results = cursor.fetchall()
+
+    return [
+        {
+            "id": r[0],
+            "content": r[1],
+            "created_at": r[2],
+            "updated_at": r[3]
+        }
+        for r in results
+    ]
 def main():
     print("Running")
